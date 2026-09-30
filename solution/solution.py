@@ -13,14 +13,9 @@ Key concepts from lecture:
     - CI/CD integration: eval as quality gate (score < threshold = block deploy)
     - Continuous Improvement Loop: Evaluate → Analyze → Improve → Augment → Repeat
 
-Instructions:
-    1. Fill in every required section marked with TODO.
-    2. Do NOT change class/function signatures. The optional ``contexts``
-       parameter in ``run_full_eval`` is part of the required interface.
-    3. Copy this file to solution/solution.py when done.
-    4. Run: pytest tests/ -v
-
-The reranking helper is an optional bonus exercise and may remain unimplemented.
+The evaluation core and optional lexical reranker are implemented. The optional
+``contexts`` parameter in ``run_full_eval`` is part of the public interface.
+Run ``pytest tests/ -v`` to check the implementation.
 """
 
 from __future__ import annotations
@@ -105,7 +100,6 @@ class EvalResult:
         Returns:
             (faithfulness + relevance + completeness) / 3.0
 
-        TODO: Return mean of the three metric scores
         """
         return (self.faithfulness + self.relevance + self.completeness) / 3.0
 
@@ -343,8 +337,12 @@ def rerank_by_overlap(contexts: list[str], query: str) -> list[str]:
     Hint: sorted(contexts, key=lambda c: len(_tokenize(c) & _tokenize(query)),
                  reverse=True)
     """
-    # TODO (Bonus — Exercise 3.5): implement the reranker
-    raise NotImplementedError("Implement rerank_by_overlap")
+    query_tokens = _tokenize(query)
+    return sorted(
+        contexts,
+        key=lambda chunk: len(_tokenize(chunk) & query_tokens),
+        reverse=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +574,6 @@ class BenchmarkRunner:
               - 'regressions': list[str] — names of metrics that regressed
               - 'passed': bool — True if no regressions
 
-        TODO: Compute avg per metric, compare, list regressions, set passed flag
         """
         metrics = ("faithfulness", "relevance", "completeness")
 
@@ -694,7 +691,6 @@ class FailureAnalyzer:
         Returns:
             Markdown table string with a row per failure. Status is always "Open".
 
-        TODO: Build markdown table with failure details + matched suggestions
         """
         rows = [
             "| Failure ID | Type | Root Cause | Suggested Fix | Status |",
@@ -717,7 +713,7 @@ class FailureAnalyzer:
         self, failures: list[EvalResult]
     ) -> list[str]:
         """
-        Generate a prioritized list of improvement suggestions based on failure patterns.
+        Generate category-specific suggestions aligned with the failure order.
 
         Each suggestion should be a concrete, actionable string.
 
@@ -759,18 +755,23 @@ class FailureAnalyzer:
                 "Check whether missing context causes unnecessary refusals",
             ],
         }
-        categories = self.categorize_failures(failures)
         suggestions: list[str] = []
-        for category in sorted(categories, key=lambda name: -categories[name]):
-            suggestions.extend(actions.get(category.lower(), [
+        seen_by_type: dict[str, int] = {}
+        for failure in failures:
+            category = (failure.failure_type or "unknown").lower()
+            options = actions.get(category, [
                 f"Inspect {category} failure traces and update the affected pipeline step"
-            ]))
+            ])
+            position = seen_by_type.get(category, 0)
+            suggestions.append(options[position % len(options)])
+            seen_by_type[category] = position + 1
         if len(suggestions) < 3:
-            suggestions.extend([
+            extras = [
                 "Review the lowest-scoring answer against its gold evidence",
                 "Add the observed failure to the regression dataset",
                 "Rerun the benchmark after changing retrieval or generation",
-            ][:3 - len(suggestions)])
+            ]
+            suggestions.extend(extras[:3 - len(suggestions)])
         return suggestions
 
 
